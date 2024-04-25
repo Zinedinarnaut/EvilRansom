@@ -42,7 +42,7 @@ Before you begin, ensure you have met the following requirements:
 1. Clone the repository to your local machine:
 
    ```bash
-   git clone https://github.com/evilcorp/ransomware.git```
+   git clone https://github.com/evilcorp/ransomware.git
 
 2. Open the project in Visual Studio.
 3. Compile the project to generate the executable file (Ransomware.exe).
