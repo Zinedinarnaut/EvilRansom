@@ -47,7 +47,7 @@ Before you begin, ensure you have met the following requirements:
 2. Open the project in Visual Studio.
 3. Compile the project to generate the executable file (Ransomware.exe).
  
-Usage
+**Usage**
 
 **Warning:** This ransomware is for educational purposes only. Do not use it for illegal activities.
 
